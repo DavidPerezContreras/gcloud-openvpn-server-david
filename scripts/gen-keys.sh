@@ -9,6 +9,9 @@ TA_KEY_PATH="$KEYS_DIR/ta.key"
 
 echo "🔧 Generating keys in: $KEYS_DIR"
 
+# Ensure volume directory exists
+mkdir -p "$KEYS_DIR"
+
 # Ensure output directories exist
 mkdir -p "$PKI_DIR"
 mkdir -p "$(dirname "$TA_KEY_PATH")"

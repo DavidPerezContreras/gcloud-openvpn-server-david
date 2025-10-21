@@ -16,6 +16,10 @@ if [ -z "$USERNAME" ]; then
   exit 1
 fi
 
+# Ensure volume and PKI directories exist
+mkdir -p "$BASE_DIR/volume"
+mkdir -p "$PKI_DIR"
+
 cd "$BASE_DIR"
 export EASYRSA_BATCH=1
 export EASYRSA_REQ_CN="$USERNAME"

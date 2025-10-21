@@ -1,0 +1,36 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: openvpn
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: openvpn
+  template:
+    metadata:
+      labels:
+        app: openvpn
+    spec:
+      hostNetwork: true
+      dnsPolicy: ClusterFirstWithHostNet
+      containers:
+      - name: openvpn
+        image: us-east1-docker.pkg.dev/vpn-project-ciber/openvpn-repo/openvpn-server:latest
+        imagePullPolicy: Always
+        ports:
+        - containerPort: 1194
+          protocol: UDP
+        volumeMounts:
+        - name: tun-device
+          mountPath: /dev/net/tun
+        securityContext:
+          privileged: true
+          capabilities:
+            add:
+              - NET_ADMIN
+      volumes:
+      - name: tun-device
+        hostPath:
+          path: /dev/net/tun
+          type: CharDevice

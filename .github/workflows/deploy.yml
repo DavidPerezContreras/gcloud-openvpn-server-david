@@ -1,0 +1,91 @@
+name: Deploy to GKE
+
+on:
+  push:
+    branches: [ master ]
+  workflow_dispatch:
+
+env:
+  GCP_REGION: us-east1
+  GCP_ZONE: us-east1-b
+  REPO_NAME: openvpn-repo
+  CLUSTER_NAME: vpn-cluster
+  REBOOT_NODE: false  # Set to 'true' to enable node reboot
+
+jobs:
+  build-and-deploy:
+    runs-on: self-hosted
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
+
+    - name: Authenticate to Google Cloud
+      uses: google-github-actions/auth@v1
+      with:
+        credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+    - name: Set up Cloud SDK
+      uses: google-github-actions/setup-gcloud@v1
+      with:
+        project_id: ${{ secrets.GCP_PROJECT_ID }}
+
+    - name: Configure Docker for Artifact Registry
+      run: |
+        gcloud auth configure-docker $GCP_REGION-docker.pkg.dev
+
+    - name: Install dos2unix
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y dos2unix
+
+    - name: Normalize shell scripts (line endings + permissions)
+      run: |
+        dos2unix scripts/entrypoint.sh
+        find scripts -type f -name "*.sh" -exec dos2unix {} \;
+        find clients -type f -name "*.sh" -exec dos2unix {} \;
+        chmod +x scripts/entrypoint.sh scripts/*.sh clients/*.sh
+
+    - name: Build Docker image (amd64 platform, no cache)
+      run: |
+        docker build --platform linux/amd64 -t $GCP_REGION-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/$REPO_NAME/openvpn-server .
+
+    - name: Push Docker image to Artifact Registry
+      run: |
+        docker push $GCP_REGION-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/$REPO_NAME/openvpn-server
+
+    - name: Install gke-gcloud-auth-plugin
+      run: |
+        gcloud components install gke-gcloud-auth-plugin
+        echo "USE_GKE_GCLOUD_AUTH_PLUGIN=True" >> $GITHUB_ENV
+
+    - name: Get GKE credentials
+      run: |
+        gcloud container clusters get-credentials $CLUSTER_NAME \
+          --zone $GCP_ZONE \
+          --project ${{ secrets.GCP_PROJECT_ID }}
+
+    - name: Deploy to GKE
+      run: |
+        kubectl apply -f k8s/deployment.yaml
+        kubectl apply -f k8s/service.yaml
+        kubectl apply -f k8s/persistent-volume.yaml
+
+    - name: Force rollout of OpenVPN deployment
+      run: |
+        kubectl rollout restart deployment openvpn
+
+    - name: Reboot GKE node to apply startup script
+      if: env.REBOOT_NODE == 'true'
+      run: |
+        NODE_NAME=$(gcloud compute instances list \
+          --filter="name~'gke-$CLUSTER_NAME' AND status=RUNNING" \
+          --format="value(name)" | head -n 1)
+
+        if [ -z "$NODE_NAME" ]; then
+          echo "❌ No GKE node found — skipping reboot."
+          exit 0
+        fi
+
+        echo "Rebooting node: $NODE_NAME"
+        gcloud compute instances reset "$NODE_NAME" --zone $GCP_ZONE
